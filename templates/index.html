@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>eGEO Viewer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.2/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/mini.css/3.0.1/mini-default.min.css">
+    <script src="https://unpkg.com/leaflet@1.9.2/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/h3-js@3.7.2/dist/h3-js.umd.js"></script>
+
+    <style>
+        #map {
+            height: 800px;
+            width: 100%;
+        }
+
+        pre {
+            font-size: 8px;
+        }
+
+        img.leaflet-marker-icon,
+        img.leaflet-marker-icon:hover {
+            background: none;
+        }
+
+        .box {
+            display: inline-block;
+            width: 15px;
+            height: 15px;
+        }
+
+        .box.amenity {
+            background-color: blue;
+        }
+
+        .box.shop {
+            background-color: cyan;
+        }
+
+        .box.tourism {
+            background-color: magenta;
+        }
+
+        button {
+            margin-right: 10px;
+        }
+
+        .attribution {
+            margin-top: auto;
+            margin-left: auto;
+            font-size: 14px;
+            color: #555;
+            white-space: nowrap;
+        }
+
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="row">
+            <h2>eGEO viewer</h2>
+            <button id="copy-current-position">Copy Position</button>
+            <button id="set-current-position">Set Current Position</button>
+            <button id="reset-current-position">Reset Current Position</button>
+            <div class="attribution">
+                Map based on OpenStreetMap (c) data, OpenStreetMap contributors
+            </div>
+        </div>
+        <div class="row">
+            <fieldset>
+                <legend>Options</legend>
+
+                <label for='show_state'>Show State</label>
+                <input id='show_state' type="checkbox" />
+            </fieldset>
+
+        </div>
+        <div class="row">
+            <p class="small">Commands: <b>+</b> Zoom In, <b>-</b> Zoom Out, <b>ArrowKeys/Mouse</b> Move</p>
+        </div>
+        <div class="row">
+            <div class="col-md-8">
+                <div id="map"></div>
+            </div>
+            <div class="col-md-4">
+                <ul>
+                    <li>Latitude: <span id="lat"></span></li>
+                    <li>Longitude: <span id="lng"></span></li>
+                    <li>Accuracy: <span id="accuracy"></span></li>
+
+                    <li>
+                        <h4>State</h4>
+                    </li>
+                    <li>Query Duration of State: <span id="duration"></span></li>
+                    <li>Total Number of State <span id="total_num_state"></span></li>
+
+                    <li>
+                        <h4>PoI</h4>
+                    </li>
+                    <li>Query Duration of PoI (Point of Interest): <span id="duration_poi"></span></li>
+                    <li>Number of PoI Found: <span id="num_poi"></span></li>
+                    <li><span class="box amenity"></span> Number of PoI Amenity <span id="num_poi_amenity"></span></li>
+                    <li><span class="box shop"></span> Number of PoI Shop <span id="num_poi_shop"></span></li>
+                    <li><span class="box tourism"></span> Number of PoI Tourism <span id="num_poi_tourism"></span></li>
+                    <li>Total Number of PoI <span id="total_num_poi"></span></li>
+
+
+                    <li>
+                        <h4>@Pos</h4>
+                    </li>
+                    <li>Query Duration @Pos <span id="duration_pos"></span></li>
+                </ul>
+                <div class="container">
+                    <div class="row">
+                        <div class="col-sm-6">
+                            <h6>State</h6>
+                            <pre id='content'></pre>
+                        </div>
+                        <div class="col-sm-6">
+                            <h6>Selected at Position</h6>
+                            <pre id='content2'></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
+    <script>
+        // map.setView([52.4966009, 13.3045968], 19);
+        const DEFAULT_ZOOM = 17;
+        const EGEO_PREFIX_RESOLUTION = 8;
+        const EGEO_STORED_RESOLUTION = 14;
+        const DEFAULT_POS = [52.4949133, 13.4155131]; // Il Casolare @Berlin
+
+        let $lat = document.querySelector('#lat');
+        let $lng = document.querySelector('#lng')
+        let $accuracy = document.querySelector('#accuracy');
+        let $duration = document.querySelector('#duration');
+        let $duration_poi = document.querySelector('#duration_poi');
+        let $duration_pos = document.querySelector('#duration_pos');
+        let $content = document.querySelector('#content');
+        let $content2 = document.querySelector('#content2');
+        let $num_poi = document.querySelector('#num_poi');
+
+        let $num_poi_amenity = document.querySelector('#num_poi_amenity');
+        let $num_poi_shop = document.querySelector('#num_poi_shop');
+        let $num_poi_tourism = document.querySelector('#num_poi_tourism');
+
+        let $total_num_state = document.querySelector('#total_num_state');
+        let $total_num_poi = document.querySelector('#total_num_poi');
+
+        // BUTTONS
+        const $copy_current_position = document.querySelector('#copy-current-position');
+        const $set_current_position = document.querySelector('#set-current-position');
+        const $reset_current_position = document.querySelector('#reset-current-position');
+        // options
+        const $show_state = document.querySelector('#show_state');
+
+        // MAP
+        let map = window.map = L.map('map', {
+            keyboard: true,
+            keyboardPanDelta: 5
+        });
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+        map.getContainer().focus()
+        map.setView(DEFAULT_POS, 15);
+        let marker = L.marker([0, 0]);
+        marker.addTo(map);
+
+        map.on('move', () => {
+            let { lat, lng } = pos = map.getCenter();
+
+            // update legend
+            $lat.textContent = `${lat}`;
+            $lng.textContent = `${lng}`;
+
+            // set marker position
+            marker.setLatLng(pos);
+        });
+
+        map.on("moveend", () => {
+            lookupState();
+            clearMap();
+            lookupPOI();
+            lookupAtPos();
+        });
+
+        lookupState();
+        lookupPOI();
+        lookupAtPos();
+
+        function lookupState() {
+            clearMap();
+
+            let { lat, lng } = pos = map.getCenter();
+
+            // get position data
+            const url_state = `/find_location?lat=${lat}&lng=${lng}`;
+
+            // province/state
+            get_location_data(url_state, (data) => {
+                $duration.textContent = `${data.duration_us}us`;
+                $total_num_state.textContent = data.total_num;
+
+                console.log(data)
+                let c = data.result.map(({ geom, ...rest }) => rest);
+
+                // show data content forall
+                $content.textContent = JSON.stringify(c, null, 2);
+
+                if ($show_state.checked == true) {
+                    for (d of data.result) {
+                        L.geoJSON(d.geom).addTo(map);
+                    }
+                }
+            });
+        };
+
+        function lookupPOI() {
+            let { lat, lng } = pos = map.getCenter();
+
+            // point of interest
+            const url_poi = `/find_poi?lat=${lat}&lng=${lng}`
+            get_location_data(url_poi, (data) => {
+                $duration_poi.textContent = `${data.duration_us}us`;
+                $num_poi.textContent = `${data.result.length}`
+                $total_num_poi.textContent = data.total_num;
+
+                L.circle([lat, lng], data.radius).addTo(map);
+
+                let num_poi_amenity = 0;
+                let num_poi_shop = 0;
+                let num_poi_tourism = 0;
+
+                for (d of data.result) {
+                    const [lon, lat] = d.pos;
+
+                    let color = 'black';
+                    if (d['amenity'] !== undefined) {
+                        num_poi_amenity++;
+                        color = 'blue';
+                    } else if (d['shop'] !== undefined) {
+                        num_poi_shop++;
+                        color = 'cyan';
+                    } else if (d['tourism'] !== undefined) {
+                        num_poi_tourism++;
+                        color = 'magenta';
+                    }
+
+                    L.circle([lat, lon], 1, { color: color }).addTo(map);
+                }
+                $num_poi_amenity.textContent = `${num_poi_amenity}`;
+                $num_poi_shop.textContent = `${num_poi_shop}`;
+                $num_poi_tourism.textContent = `${num_poi_tourism}`;
+            });
+        };
+
+        function lookupAtPos() {
+            let { lat, lng } = pos = map.getCenter();
+            const url_poi = `/find_position?lat=${lat}&lng=${lng}`
+            get_location_data(url_poi, (data) => {
+                $duration_pos.textContent = `${data.duration_us}us`;
+                $content2.textContent = JSON.stringify(data.result, null, 2);
+            });
+        };
+
+        $copy_current_position.addEventListener('click', async () => {
+            const lon = $lng.textContent;
+            const lat = $lat.textContent;
+            const s = `${lon},${lat}`;
+            console.log('COPY', s);
+            await navigator.clipboard.writeText(s);
+        });
+
+        $set_current_position.addEventListener('click', () => {
+            navigator.geolocation.getCurrentPosition(
+                // success
+                (pos) => {
+                    const crd = pos.coords;
+
+                    $lat.textContent = `${crd.latitude}`;
+                    $lng.textContent = `${crd.longitude}`;
+                    $accuracy.textContent = `${crd.accuracy} meters.`;
+
+                    console.log('CURRENT_POS', crd.longitude, crd.latitude);
+                    clearMap();
+                    map.setView([crd.latitude, crd.longitude], DEFAULT_ZOOM);
+                },
+                // error
+                (err) => {
+                    console.warn(`ERROR(${err.code}): ${err.message}`);
+                },
+                // options
+                {
+                    enableHighAccuracy: true,
+                    timeout: 5000,
+                    maximumAge: 0
+                });
+        });
+        $reset_current_position.addEventListener('click', () => {
+            clearMap();
+            map.setView(DEFAULT_POS, DEFAULT_ZOOM);
+        });
+
+        function get_location_data(url, cb) {
+            window.fetch(url)
+                .then((res) => res.json())
+                .then(cb)
+                .catch((err) => console.error(err))
+        }
+
+        function render_geom(geom) {
+            switch (geom[0]) {
+                case 'polygon': {
+                    L.polygon(geom[1][0].map(([a, b]) => [b, a])).addTo(map);
+                } break;
+                case 'multipolygon': {
+                    for (g of geom[1]) {
+                        render_geom(g);
+                    }
+                } break;
+                default:
+                    L.polygon(geom).addTo(map);
+            }
+        }
+
+        function clearMap() {
+            for (i in map._layers) {
+                if (map._layers[i]._path != undefined) {
+                    try {
+                        map.removeLayer(map._layers[i]);
+                    }
+                    catch (e) {
+                        console.log("problem with " + e + map._layers[i]);
+                    }
+                }
+            }
+        }
+
+        function normalize(geom) {
+            switch (geom[0]) {
+                case 'polygon': return geom[1][0].map(([a, b]) => [b, a]);
+                case 'multipolygon':
+                    let acc = [];
+                    for (g of geom[1]) {
+                        acc.push(normalize(g))
+                    }
+                    return acc;
+                default:
+                    return geom.map(([a, b]) => [b, a])
+            }
+        }
+    </script>
+</body>
+
+</html>
