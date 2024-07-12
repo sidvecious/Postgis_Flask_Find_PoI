@@ -127,13 +127,6 @@ def find_position():
         "total_num": count,
     }
 
-
-def table_count(table):
-    with db.session.begin():
-        result = db.session.execute(text(f"SELECT COUNT(*) AS count FROM {table}"))
-        count = result.scalar()
-    return count
-
 def db_query(sql, args):
     t0 = time.time()
     result = db.session.execute(text(sql), args).fetchall()
