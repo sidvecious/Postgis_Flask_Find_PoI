@@ -1,53 +1,69 @@
+import os
 import psycopg2
 import json
 import osmium
+from urllib.parse import urlparse
+from psycopg2 import ProgrammingError
+from dotenv import load_dotenv
+
+load_dotenv()
+
+result = urlparse(os.getenv('DATABASE_URL'))
 
 opts = {
-    "database": "Postgis-flask-find-points",
-    "host": "localhost",
-    "user": "postgres",
-    "password": "postgres",
-    "port": "5432"
+    "database": result.path[1:],
+    "host": result.hostname,
+    "user": result.username,
+    "password": result.password,
+    "port": result.port
 }
 
 conn = psycopg2.connect(**opts)
 cursor = conn.cursor()
 
-# POSTGIS
-cursor.execute(open('schema.sql', 'r').read())
+# postGIS, Execute schema setup
+with open('schema.sql', 'r') as file:
+    cursor.execute(file.read())
 
-# PLACES
+# populate the boundary table with the boundary.json
 try:
-    with open('places.json', 'r') as fp:
+    with open('boundary.json', 'r') as fp:
         data = json.load(fp)
 
         for item in data:
             geom = item["geometry"]
             del item["geometry"]
 
-            cursor.execute("INSERT INTO places (data, geom) VALUES (%s, %s)",
+            cursor.execute("INSERT INTO boundary (data, geom) VALUES (%s, %s)",
                            (json.dumps(dict(item)), geom))
 
     conn.commit()
 
-
-except Exception as e:
+except FileNotFoundError as e:
+    print(f"File not found: {e}")
     conn.rollback()
-    print("Error inserting into places:", e)
+except ProgrammingError as e:
+    print(f"SQL execution error: {e}")
+    conn.rollback()
+except json.JSONDecodeError as e:
+    print(f"Error reading JSON file: {e}")
+    conn.rollback()
 
-# POI
 
-
+# Populate the points of interest table from poi.osm.pbf.
 class AmenityListHandler(osmium.SimpleHandler):
     def node(self, n):
         lng = n.location.lon
         lat = n.location.lat
         data = json.dumps(dict(n.tags))
         cursor.execute(
-            "INSERT INTO poi (lat, lng, data, geom) VALUES (%s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326))", (lat, lng, data, lng, lat))
+            "INSERT INTO poi (lat, lng, data, geom) VALUES (%s, %s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4326))",
+            (lat, lng, data, lng, lat))
 
 
 handler = AmenityListHandler()
 handler.apply_file("poi.osm.pbf")
 
 conn.commit()
+
+

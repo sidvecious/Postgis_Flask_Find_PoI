@@ -2,7 +2,7 @@
 <html>
 
 <head>
-    <title>eGEO Viewer</title>
+    <title>PoI Viewer</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.2/dist/leaflet.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/mini.css/3.0.1/mini-default.min.css">
@@ -60,7 +60,7 @@
 <body>
     <div class="container">
         <div class="row">
-            <h2>eGEO viewer</h2>
+            <h2>PoI Viewer</h2>
             <button id="copy-current-position">Copy Position</button>
             <button id="set-current-position">Set Current Position</button>
             <button id="reset-current-position">Reset Current Position</button>
@@ -88,7 +88,6 @@
                 <ul>
                     <li>Latitude: <span id="lat"></span></li>
                     <li>Longitude: <span id="lng"></span></li>
-                    <li>Accuracy: <span id="accuracy"></span></li>
 
                     <li>
                         <h4>State</h4>
@@ -161,25 +160,27 @@
         // options
         const $show_state = document.querySelector('#show_state');
 
-        // MAP
+        // INITIALIZE MAP
         let map = window.map = L.map('map', {
             keyboard: true,
             keyboardPanDelta: 5
         });
+        // ADD TILE LAYER FROM OPEN STREET MAP
         L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
         map.getContainer().focus()
         map.setView(DEFAULT_POS, 15);
         let marker = L.marker([0, 0]);
         marker.addTo(map);
 
+        //
         map.on('move', () => {
             let { lat, lng } = pos = map.getCenter();
 
-            // update legend
+            // UPDATE LEGEND
             $lat.textContent = `${lat}`;
             $lng.textContent = `${lng}`;
 
-            // set marker position
+            // SET MARKER POSITION
             marker.setLatLng(pos);
         });
 
@@ -194,15 +195,16 @@
         lookupPOI();
         lookupAtPos();
 
+        // LOOK AT WHAT PROVINCE/STATE THE MAP IS IN
         function lookupState() {
             clearMap();
 
             let { lat, lng } = pos = map.getCenter();
 
-            // get position data
-            const url_state = `/find_location?lat=${lat}&lng=${lng}`;
+            // GET POSITION DATA
+            const url_state = `/find_boundary?lat=${lat}&lng=${lng}`;
 
-            // province/state
+            // PROVINCE/STATE
             get_location_data(url_state, (data) => {
                 $duration.textContent = `${data.duration_us}us`;
                 $total_num_state.textContent = data.total_num;
@@ -210,7 +212,7 @@
                 console.log(data)
                 let c = data.result.map(({ geom, ...rest }) => rest);
 
-                // show data content forall
+                // SHOW DATA CONTENT FOR ALL
                 $content.textContent = JSON.stringify(c, null, 2);
 
                 if ($show_state.checked == true) {
@@ -221,10 +223,11 @@
             });
         };
 
+        // MARK ON MAP THE POINT OF INTEREST
         function lookupPOI() {
             let { lat, lng } = pos = map.getCenter();
 
-            // point of interest
+            // POINT OF INTEREST
             const url_poi = `/find_poi?lat=${lat}&lng=${lng}`
             get_location_data(url_poi, (data) => {
                 $duration_poi.textContent = `${data.duration_us}us`;
@@ -260,15 +263,17 @@
             });
         };
 
+        // FIND DATA ABOUT THE ACTUAL POSITION
         function lookupAtPos() {
             let { lat, lng } = pos = map.getCenter();
-            const url_poi = `/find_position?lat=${lat}&lng=${lng}`
+            const url_poi = `/find_position_data?lat=${lat}&lng=${lng}`
             get_location_data(url_poi, (data) => {
                 $duration_pos.textContent = `${data.duration_us}us`;
                 $content2.textContent = JSON.stringify(data.result, null, 2);
             });
         };
 
+        // COPY POSITION BUTTON
         $copy_current_position.addEventListener('click', async () => {
             const lon = $lng.textContent;
             const lat = $lat.textContent;
@@ -277,35 +282,38 @@
             await navigator.clipboard.writeText(s);
         });
 
+        // SET CURRENT POSITION BUTTON
         $set_current_position.addEventListener('click', () => {
             navigator.geolocation.getCurrentPosition(
-                // success
+                // SUCCESS
                 (pos) => {
                     const crd = pos.coords;
 
                     $lat.textContent = `${crd.latitude}`;
                     $lng.textContent = `${crd.longitude}`;
-                    $accuracy.textContent = `${crd.accuracy} meters.`;
 
                     console.log('CURRENT_POS', crd.longitude, crd.latitude);
                     clearMap();
                     map.setView([crd.latitude, crd.longitude], DEFAULT_ZOOM);
                 },
-                // error
+                // ERROR
                 (err) => {
                     console.warn(`ERROR(${err.code}): ${err.message}`);
                 },
-                // options
+                // OPTIONS
                 {
                     enableHighAccuracy: true,
                     timeout: 5000,
                     maximumAge: 0
                 });
         });
+
+        // RESET CURRENT POSITION BUTTON
         $reset_current_position.addEventListener('click', () => {
             clearMap();
             map.setView(DEFAULT_POS, DEFAULT_ZOOM);
         });
+
 
         function get_location_data(url, cb) {
             window.fetch(url)
@@ -314,6 +322,7 @@
                 .catch((err) => console.error(err))
         }
 
+        // RENDER GEOJSON ON THE MAP
         function render_geom(geom) {
             switch (geom[0]) {
                 case 'polygon': {

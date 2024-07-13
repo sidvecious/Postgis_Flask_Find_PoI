@@ -1,14 +1,14 @@
 -- enable: postgis
 CREATE EXTENSION IF NOT EXISTS postgis;
 
--- places
-DROP TABLE IF EXISTS places;
-CREATE TABLE  places (
+-- boundary
+DROP TABLE IF EXISTS boundary;
+CREATE TABLE  boundary (
     id serial PRIMARY KEY,
     data json,
     geom geometry(Geometry, 4326)
 );
-CREATE INDEX idx_places_geom ON places USING gist (geom);
+CREATE INDEX idx_boundary_geom ON boundary USING gist (geom);
 
 -- poi
 DROP TABLE IF EXISTS poi;

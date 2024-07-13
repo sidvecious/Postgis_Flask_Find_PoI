@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import text
 from dotenv import load_dotenv
@@ -6,53 +6,78 @@ from shapely import wkb
 import geojson
 import os
 import time
+from sqlalchemy.exc import SQLAlchemyError
 
 load_dotenv()
 
+radius_in_meters = 100
+
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY')
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-
 @app.route('/')
-def hello():
+def home_page():
     return render_template('index.html')
 
+class InvalidCoordinatesError(Exception):
+    def __init__(self, message):
+        super().__init__(message)
 
-@app.route("/find_location")
-def find_location():
-    args = request.args
-    lat = args.get('lat', 0.0, type=float)
-    lng = args.get('lng', 0.0, type=float)
+# debugging function for the coordinates
+def get_coordinates(args):
+    try:
+        lat = float(args.get('lat', ''))
+        lng = float(args.get('lng', ''))
+    except ValueError:
+        raise InvalidCoordinatesError("Invalid 'lat' or 'lng' parameter")
 
-    count = table_count("places")
-    t0 = time.time()
+    if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
+        raise InvalidCoordinatesError("Invalid latitude values or Invalid longitude values")
+    return lat, lng
 
-    result = db.session.execute(
-        text("""
-            SELECT data, geom FROM places p 
-            WHERE ST_Within(ST_SetSRID(ST_MakePoint(:lng, :lat), 4326), p.geom)
-        """),
-        {'lng': lng, 'lat': lat}
-    ).fetchall()
+# finds the boundary to which the searched point belongs
+# poi.osm.pbf is focused on Berlin's points of interest.
+@app.route("/find_boundary")
+def find_boundary():
+    try:
+        args = request.args
+        lat, lng = get_coordinates(args)
 
-    elapsed = time.time() - t0
+        count = table_count("boundary")
+        t0 = time.time()
 
-    new_result = []
-    for row in result:
-        data, geom = row
-        polygon = wkb.loads(geom)
-        data["geom"] = geojson.Feature(geometry=polygon, properties={})
-        new_result.append(data)
+        result = db.session.execute(
+            text("""
+                SELECT data, geom FROM boundary p 
+                WHERE ST_Within(ST_SetSRID(ST_MakePoint(:lng, :lat), 4326), p.geom)
+            """),
+            {'lng': lng, 'lat': lat}
+        ).fetchall()
 
-    return {
-        "result": new_result,
-        "duration_us": elapsed * 1_000_000, # microseconds
-        "total_num": count
-    }
+        elapsed = time.time() - t0
+
+        new_result = []
+        for row in result:
+            data, geom = row
+            polygon = wkb.loads(geom)
+            data["geom"] = geojson.Feature(geometry=polygon, properties={})
+            new_result.append(data)
+
+        return {
+            "result": new_result,
+            "duration_us": elapsed * 1_000_000,  # microseconds
+            "total_num": count
+        }
+    except InvalidCoordinatesError as e:
+        return jsonify({"error": "Invalid Coordinates", "message": str(e)}), 400
+    except SQLAlchemyError as e:
+        return jsonify({"error": "Database error", "message": str(e)}), 500
+    except Exception as e:
+        return jsonify({"error": "Unexpected error", "message": str(e)}), 500
 
 def table_count(table):
     with db.session.begin():
@@ -60,79 +85,86 @@ def table_count(table):
         count = result.scalar()
     return count
 
-
+# finds the point of interest from the selected starting point within a radius of radius_of_meters
+# and displays it along with the circumference of interest.
 @app.route("/find_poi")
 def find_poi():
-    args = request.args
-    lat = args.get('lat', 0.0, type=float)
-    lng = args.get('lng', 0.0, type=float)
+    try:
+        args = request.args
+        lat, lng = get_coordinates(args)
 
-    count = table_count("poi")
-    radius_in_meters = 100
-    t0 = time.time()
+        count = table_count("poi")
+        t0 = time.time()
 
-    result = db.session.execute(
-        text("""
-            SELECT data, lng, lat FROM poi p
-            WHERE ST_DistanceSphere(p.geom, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)) < :radius
-        """),
-        {'lng': lng, 'lat': lat, 'radius': radius_in_meters}
-    ).fetchall()
+        try:
+            result = db.session.execute(
+                text("""
+                    SELECT data, lng, lat FROM poi p
+                    WHERE ST_DistanceSphere(p.geom, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)) < :radius
+                """),
+                {'lng': lng, 'lat': lat, 'radius': radius_in_meters}
+            ).fetchall()
+        except SQLAlchemyError as e:
+            return jsonify({"error": "Database error", "message": str(e)}), 500
 
-    elapsed = time.time() - t0
+        elapsed = time.time() - t0
 
-    new_result = []
-    for row in result:
-        data, lng, lat = row
-        data["pos"] = [lng, lat]
-        new_result.append(data)
+        new_result = []
+        for row in result:
+            data, lng, lat = row
+            data["pos"] = [lng, lat]
+            new_result.append(data)
 
-    return {
-        "result": new_result,
-        "duration_us": elapsed * 1_000_000,  # microseconds
-        "total_num": count,
-        "radius": radius_in_meters
-    }
+        return {
+            "result": new_result,
+            "duration_us": elapsed * 1_000_000,  # microseconds
+            "total_num": count,
+            "radius": radius_in_meters
+        }
+    except InvalidCoordinatesError as e:
+        return jsonify({"error": "Invalid Coordinates", "message": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": "Unexpected error", "message": str(e)}), 500
 
+# finds the point of interest from the selected starting point within a radius of radius_of_meters
+# and shows the openstreetmap data associated with the points in a json
+@app.route("/find_position_data")
+def find_position_data():
+    try:
+        args = request.args
+        lat, lng = get_coordinates(args)
 
-@app.route("/find_position")
-def find_position():
-    args = request.args
-    lat = args.get('lat', 0.0, type=float)
-    lng = args.get('lng', 0.0, type=float)
+        count = table_count("poi")
+        t0 = time.time()
 
-    count = table_count("poi")
-    radius_in_meters = 100
-    t0 = time.time()
+        try:
+            result = db.session.execute(
+                text("""
+                    SELECT data, lng, lat FROM poi p 
+                    WHERE ST_DistanceSphere(p.geom, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)) < :radius
+                """),
+                {'lng': lng, 'lat': lat, 'radius': radius_in_meters}
+            ).fetchall()
+        except SQLAlchemyError as e:
+            return jsonify({"error": "Database error", "message": str(e)}), 500
 
-    result = db.session.execute(
-        text("""
-            SELECT data, lng, lat FROM poi p 
-            WHERE ST_DistanceSphere(p.geom, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)) < :radius
-        """),
-        {'lng': lng, 'lat': lat, 'radius': radius_in_meters}
-    ).fetchall()
+        elapsed = time.time() - t0
 
-    elapsed = time.time() - t0
+        new_result = []
+        for row in result:
+            data, lng, lat = row
+            data["pos"] = [lng, lat]
+            new_result.append(data)
 
-    new_result = []
-    for row in result:
-        data, lng, lat = row
-        data["pos"] = [lng, lat]
-        new_result.append(data)
-
-    return {
-        "result": new_result,
-        "duration_us": elapsed * 1_000_000,
-        "total_num": count,
-    }
-
-def db_query(sql, args):
-    t0 = time.time()
-    result = db.session.execute(text(sql), args).fetchall()
-    elapsed = time.time()-t0
-    return (elapsed * 1_000_000, result)
-
+        return {
+            "result": new_result,
+            "duration_us": elapsed * 1_000_000,
+            "total_num": count,
+        }
+    except InvalidCoordinatesError as e:
+        return jsonify({"error": "Invalid Coordinates", "message": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": "Unexpected error", "message": str(e)}), 500
 
 if __name__ == '__main__':
     with app.app_context():

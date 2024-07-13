@@ -1,8 +1,8 @@
-# PostGIS-Flask Application
+# PostGIS-Flask Application - PoI Viewer
 
-This Flask application integrates with PostGIS, h3 JS and Leaflet JS 
+PoI Viewer is a Flask application integrates with PostGIS, h3 JS and Leaflet JS 
 to handle geospatial data and test the performance of PostGIS queries 
-for finding points of interest in a certain area.
+for finding points of interest and relatives data in a certain area.
 
 Map based on OpenStreetMap (c) data, OpenStreetMap contributors
 ## Setup
